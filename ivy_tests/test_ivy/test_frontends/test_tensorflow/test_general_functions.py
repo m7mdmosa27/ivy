@@ -1,9 +1,13 @@
 # global
-from hypothesis import strategies as st
+from hypothesis import strategies as st, assume
 import numpy as np
+
 
 # local
 import ivy_tests.test_ivy.helpers as helpers
+from ivy_tests.test_ivy.test_frontends.test_numpy.test_creation_routines.test_from_shape_or_value import (  # noqa : E501
+    _input_fill_and_dtype,
+)
 from ivy_tests.test_ivy.helpers import handle_frontend_test
 from ivy_tests.test_ivy.test_functional.test_core.test_linalg import _matrix_rank_helper
 
@@ -179,6 +183,40 @@ def test_tensorflow_ones(
     )
 
 
+# full
+@handle_frontend_test(
+    fn_tree="tensorflow.fill",
+    shape=helpers.get_shape(),
+    input_fill_dtype=_input_fill_and_dtype(),
+)
+def test_tensorflow_fill(
+    shape,
+    input_fill_dtype,
+    as_variable,
+    native_array,
+    with_out,
+    frontend,
+    fn_tree,
+    on_device,
+    num_positional_args,
+):
+    input_dtype, _, fill, dtype_to_cast = input_fill_dtype
+    helpers.test_frontend_function(
+        input_dtypes=input_dtype,
+        as_variable_flags=as_variable,
+        with_out=with_out,
+        with_inplace=False,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        rtol=1e-05,
+        dims=shape,
+        value=fill,
+    )
+
+
 # einsum
 @handle_frontend_test(
     fn_tree="tensorflow.einsum",
@@ -225,7 +263,46 @@ def test_tensorflow_einsum(
 
 
 @st.composite
-def _constant_helper(draw):
+def _reshape_helper(draw):
+    shape = draw(helpers.get_shape(min_num_dims=1))
+    reshape_shape = draw(helpers.reshape_shapes(shape=shape))
+    dtype = draw(helpers.array_dtypes(num_arrays=1))
+    x = draw(helpers.array_values(dtype=dtype[0], shape=shape))
+    return x, dtype, reshape_shape
+
+
+# reshape
+@handle_frontend_test(
+    fn_tree="tensorflow.reshape",
+    input_x_shape=_reshape_helper(),
+)
+def test_tensorflow_reshape(
+    *,
+    input_x_shape,
+    num_positional_args,
+    as_variable,
+    native_array,
+    on_device,
+    fn_tree,
+    frontend,
+):
+    x, x_dtype, shape = input_x_shape
+    helpers.test_frontend_function(
+        input_dtypes=x_dtype,
+        as_variable_flags=as_variable,
+        with_out=False,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        tensor=x,
+        shape=shape,
+    )
+
+
+@st.composite
+def _x_cast_dtype_shape(draw):
     x_dtype = draw(helpers.get_dtypes("valid", full=False))
     x_dtype, x = draw(
         helpers.dtype_and_values(
@@ -236,7 +313,10 @@ def _constant_helper(draw):
     to_shape = draw(
         helpers.reshape_shapes(shape=st.shared(helpers.get_shape(), key="value_shape")),
     )
-    cast_dtype = x_dtype[0]  # draw(
+    cast_dtype = x_dtype[0]
+    # known tensorflow bug when trying to cast to a different type
+    # https://github.com/tensorflow/tensorflow/issues/39554
+    # cast_dtype = draw(
     #     helpers.get_dtypes("valid", full=False)
     #     .map(lambda t: t[0])
     #     .filter(lambda t: ivy.can_cast(x_dtype[0], t))
@@ -247,7 +327,7 @@ def _constant_helper(draw):
 # constant
 @handle_frontend_test(
     fn_tree="tensorflow.constant",
-    all_args=_constant_helper(),
+    all_args=_x_cast_dtype_shape(),
 )
 def test_tensorflow_constant(
     *,
@@ -275,26 +355,10 @@ def test_tensorflow_constant(
     )
 
 
-@st.composite
-def _convert_to_tensor_helper(draw):
-    x_dtype = draw(helpers.get_dtypes("valid", full=False))
-    x_dtype, x = draw(
-        helpers.dtype_and_values(
-            dtype=x_dtype,
-        )
-    )
-    cast_dtype = x_dtype[0]  # draw(
-    #     helpers.get_dtypes("valid", full=False)
-    #     .map(lambda t: t[0])
-    #     .filter(lambda t: ivy.can_cast(x_dtype[0], t))
-    # )
-    return x_dtype, x, cast_dtype
-
-
 # convert_to_tensor
 @handle_frontend_test(
     fn_tree="tensorflow.convert_to_tensor",
-    dtype_x_cast=_convert_to_tensor_helper(),
+    dtype_x_cast=_x_cast_dtype_shape(),
     dtype_hint=helpers.get_dtypes("valid", full=False),
 )
 def test_tensorflow_convert_to_tensor(
@@ -308,7 +372,7 @@ def test_tensorflow_convert_to_tensor(
     fn_tree,
     frontend,
 ):
-    x_dtype, x, cast_dtype = dtype_x_cast
+    x_dtype, x, cast_dtype, _ = dtype_x_cast
     helpers.test_frontend_function(
         input_dtypes=x_dtype,
         as_variable_flags=as_variable,
@@ -384,6 +448,36 @@ def test_tensorflow_ones_like(
     )
 
 
+# identity
+@handle_frontend_test(
+    fn_tree="tensorflow.identity",
+    dtype_and_x=helpers.dtype_and_values(
+        available_dtypes=helpers.get_dtypes("numeric", full=True),
+    ),
+)
+def test_tensorflow_identity(
+    dtype_and_x,
+    as_variable,
+    num_positional_args,
+    native_array,
+    frontend,
+    fn_tree,
+    on_device,
+):
+    dtype, x = dtype_and_x
+    helpers.test_frontend_function(
+        input_dtypes=dtype,
+        as_variable_flags=as_variable,
+        with_out=False,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        input=x[0],
+    )
+
+
 # zeros_like
 @handle_frontend_test(
     fn_tree="tensorflow.zeros_like",
@@ -453,6 +547,53 @@ def test_tensorflow_expand_dims(
         fn_tree=fn_tree,
         on_device=on_device,
         input=value[0],
+        axis=axis,
+    )
+
+
+# Squeeze
+@st.composite
+def _squeeze_helper(draw):
+    shape = draw(st.shared(helpers.get_shape(), key="value_shape"))
+    valid_axes = []
+    for index, axis in enumerate(shape):
+        if axis == 1:
+            valid_axes.append(index)
+    valid_axes.insert(0, None)
+    return draw(st.sampled_from(valid_axes))
+
+
+@handle_frontend_test(
+    fn_tree="tensorflow.squeeze",
+    dtype_value=helpers.dtype_and_values(
+        available_dtypes=helpers.get_dtypes("valid", full=True),
+        shape=st.shared(helpers.get_shape(), key="value_shape"),
+    ),
+    axis=_squeeze_helper(),
+)
+def test_tensorflow_squeeze_general(
+    *,
+    dtype_value,
+    axis,
+    with_out,
+    as_variable,
+    num_positional_args,
+    native_array,
+    on_device,
+    fn_tree,
+    frontend,
+):
+    dtype, xs = dtype_value
+    helpers.test_frontend_function(
+        input_dtypes=dtype,
+        as_variable_flags=as_variable,
+        with_out=with_out,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        input=xs[0],
         axis=axis,
     )
 
@@ -567,6 +708,40 @@ def test_tensorflow_shape(
     )
 
 
+@handle_frontend_test(
+    fn_tree="tensorflow.shape_n",
+    dtype_and_x=helpers.dtype_and_values(
+        available_dtypes=helpers.get_dtypes("valid"), max_num_dims=5
+    ),
+    output_dtype=st.sampled_from(["int32", "int64"]),
+)
+def test_tensorflow_shape_n(
+    *,
+    dtype_and_x,
+    output_dtype,
+    as_variable,
+    with_out,
+    num_positional_args,
+    native_array,
+    on_device,
+    fn_tree,
+    frontend,
+):
+    input_dtype, input = dtype_and_x
+    helpers.test_frontend_function(
+        input_dtypes=input_dtype,
+        as_variable_flags=as_variable,
+        with_out=with_out,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        input=input,
+        out_type=output_dtype,
+    )
+
+
 # range
 @handle_frontend_test(
     fn_tree="tensorflow.range",
@@ -644,3 +819,314 @@ def test_tensorflow_sort(
         axis=axis,
         direction=descending,
     )
+
+
+# searchsorted
+@handle_frontend_test(
+    fn_tree="tensorflow.searchsorted",
+    dtype_x_v=helpers.dtype_and_values(
+        available_dtypes=helpers.get_dtypes("float"),
+        shared_dtype=True,
+        min_num_dims=1,
+        max_num_dims=1,
+        num_arrays=2,
+    ),
+    side=st.sampled_from(["left", "right"]),
+    out_type=st.sampled_from(["int32", "int64"]),
+)
+def test_tensorflow_searchsorted(
+    dtype_x_v,
+    side,
+    out_type,
+    as_variable,
+    num_positional_args,
+    native_array,
+    frontend,
+    fn_tree,
+    on_device,
+):
+    input_dtypes, xs = dtype_x_v
+    helpers.test_frontend_function(
+        input_dtypes=input_dtypes,
+        as_variable_flags=as_variable,
+        with_out=False,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        sorted_sequence=np.sort(xs[0]),
+        values=xs[1],
+        side=side,
+        out_type=out_type,
+    )
+
+
+# stack
+@handle_frontend_test(
+    fn_tree="tensorflow.stack",
+    dtype_values_axis=helpers.dtype_values_axis(
+        available_dtypes=helpers.get_dtypes("float"),
+        num_arrays=st.shared(helpers.ints(min_value=2, max_value=4), key="num_arrays"),
+        shape=helpers.get_shape(min_num_dims=1),
+        shared_dtype=True,
+        valid_axis=True,
+        allow_neg_axes=True,
+        force_int_axis=True,
+    ),
+)
+def test_tensorflow_stack(
+    dtype_values_axis,
+    as_variable,
+    with_out,
+    num_positional_args,
+    native_array,
+    on_device,
+    fn_tree,
+    frontend,
+):
+    input_dtype, values, axis = dtype_values_axis
+    helpers.test_frontend_function(
+        input_dtypes=input_dtype,
+        as_variable_flags=as_variable,
+        with_out=with_out,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        values=values,
+        axis=axis,
+    )
+
+
+# is_tensor
+@handle_frontend_test(
+    fn_tree="tensorflow.is_tensor",
+    dtype_and_x=helpers.dtype_and_values(available_dtypes=helpers.get_dtypes("valid")),
+)
+def test_tensorflow_is_tensor(
+    *,
+    dtype_and_x,
+    with_out,
+    num_positional_args,
+    native_array,
+    frontend,
+    fn_tree,
+):
+    input_dtype, x = dtype_and_x
+    helpers.test_frontend_function(
+        input_dtypes=input_dtype,
+        as_variable_flags=[False],
+        with_out=with_out,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        x=x[0],
+    )
+
+
+# gather
+@handle_frontend_test(
+    fn_tree="tensorflow.gather",
+    params_indices_axis_batch_dims=helpers.array_indices_axis(
+        array_dtypes=helpers.get_dtypes("valid"),
+        indices_dtypes=["int64"],
+        min_num_dims=1,
+        max_num_dims=5,
+        min_dim_size=1,
+        max_dim_size=10,
+        indices_same_dims=True,
+    ),
+)
+def test_tensorflow_gather(
+    *,
+    params_indices_axis_batch_dims,
+    as_variable,
+    with_out,
+    num_positional_args,
+    native_array,
+    on_device,
+    fn_tree,
+    frontend,
+):
+    input_dtypes, params, indices, axis, batch_dims = params_indices_axis_batch_dims
+    helpers.test_frontend_function(
+        input_dtypes=input_dtypes,
+        as_variable_flags=as_variable,
+        with_out=with_out,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        params=params,
+        indices=indices,
+        axis=axis,
+        batch_dims=batch_dims,
+    )
+
+
+# gather_nd
+@handle_frontend_test(
+    fn_tree="tensorflow.gather_nd",
+    params_indices_axis_batch_dims=helpers.array_indices_axis(
+        array_dtypes=helpers.get_dtypes("valid"),
+        indices_dtypes=["int64"],
+        min_num_dims=5,
+        max_num_dims=10,
+        min_dim_size=1,
+        max_dim_size=5,
+        indices_same_dims=False,
+    ),
+)
+def test_tensorflow_gather_nd(
+    *,
+    params_indices_axis_batch_dims,
+    as_variable,
+    with_out,
+    num_positional_args,
+    native_array,
+    on_device,
+    fn_tree,
+    frontend,
+):
+    input_dtypes, params, indices, axis, batch_dims = params_indices_axis_batch_dims
+    helpers.test_frontend_function(
+        input_dtypes=input_dtypes,
+        as_variable_flags=as_variable,
+        with_out=with_out,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        params=params,
+        indices=indices,
+        batch_dims=batch_dims,
+    )
+
+
+# transpose
+@st.composite
+def _get_perm_helper(draw):
+    shape = draw(st.shared(helpers.get_shape(min_num_dims=1), key="shape"))
+    dimensions = [x for x in range(len(shape))]
+    perm = draw(st.permutations(dimensions))
+    return perm
+
+
+@handle_frontend_test(
+    fn_tree="tensorflow.transpose",
+    dtype_and_x=helpers.dtype_and_values(
+        available_dtypes=helpers.get_dtypes("float"),
+        shape=st.shared(helpers.get_shape(min_num_dims=1), key="shape"),
+    ),
+    perm=_get_perm_helper(),
+    conjugate=st.booleans(),
+)
+def test_tensorflow_transpose(
+    *,
+    dtype_and_x,
+    perm,
+    conjugate,
+    as_variable,
+    num_positional_args,
+    native_array,
+    frontend,
+    fn_tree,
+    on_device,
+):
+    dtype, x = dtype_and_x
+    helpers.test_frontend_function(
+        input_dtypes=dtype,
+        as_variable_flags=as_variable,
+        with_out=False,
+        num_positional_args=num_positional_args,
+        native_array_flags=native_array,
+        frontend=frontend,
+        fn_tree=fn_tree,
+        on_device=on_device,
+        a=x[0],
+        perm=perm,
+        conjugate=conjugate,
+    )
+
+
+@st.composite
+def _strided_slice_helper(draw):
+    dtype, x, shape = draw(
+        helpers.dtype_and_values(
+            available_dtypes=helpers.get_dtypes("valid"),
+            min_num_dims=1,
+            ret_shape=True,
+        ),
+    )
+    ndims = len(shape)
+    masks = draw(
+        st.lists(
+            st.integers(min_value=0, max_value=2**ndims - 1), min_size=5, max_size=5
+        ).filter(
+            lambda x: bin(x[2])[2:].count("1") <= 1
+        )  # maximum one ellipse
+    )
+    begin, end, strides = [], [], []
+    n_omit = np.random.randint(0, ndims)
+    sub_shape = shape[:-n_omit]
+    for i in sub_shape:
+        begin += [draw(st.integers(min_value=0, max_value=i - 1))]
+        end += [
+            draw(
+                st.integers(min_value=0, max_value=i - 1).filter(
+                    lambda x: x != begin[-1]
+                )
+            )
+        ]
+        if begin[-1] < end[-1]:
+            strides += [draw(st.integers(min_value=1))]
+        else:
+            strides += [draw(st.integers(max_value=-1))]
+    return dtype, x, np.array(begin), np.array(end), np.array(strides), masks
+
+
+# strided_slice
+@handle_frontend_test(
+    fn_tree="tensorflow.strided_slice",
+    dtype_x_params=_strided_slice_helper(),
+)
+def test_tensorflow_strided_slice(
+    *,
+    dtype_x_params,
+    as_variable,
+    num_positional_args,
+    native_array,
+    frontend,
+    fn_tree,
+    on_device,
+):
+    dtype, x, begin, end, strides, masks = dtype_x_params
+    try:
+        helpers.test_frontend_function(
+            input_dtypes=dtype + 3 * ["int64"] + 5 * ["int32"],
+            as_variable_flags=as_variable,
+            with_out=False,
+            num_positional_args=num_positional_args,
+            native_array_flags=native_array,
+            frontend=frontend,
+            fn_tree=fn_tree,
+            on_device=on_device,
+            input_=x[0],
+            begin=begin,
+            end=end,
+            strides=strides,
+            begin_mask=masks[0],
+            end_mask=masks[1],
+            ellipsis_mask=masks[2],
+            new_axis_mask=masks[3],
+            shrink_axis_mask=masks[4],
+        )
+    except Exception as e:
+        if hasattr(e, "message"):
+            if "only stride 1 allowed on non-range indexing" in e.message:
+                assume(False)

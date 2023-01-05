@@ -1,16 +1,14 @@
 import operator
 from typing import Union, Optional, Tuple, List
+from numbers import Number
 import tensorflow as tf
 from .. import backend_version
 
 
 # local
 import ivy
-from ivy.func_wrapper import with_unsupported_dtypes
+from ivy.func_wrapper import with_unsupported_dtypes, with_supported_dtypes
 import tensorflow_probability as tfp
-from tensorflow.python.ops.numpy_ops import np_config
-
-np_config.enable_numpy_behavior()
 
 
 def sinc(
@@ -19,8 +17,8 @@ def sinc(
     *,
     out: Optional[Union[tf.Tensor, tf.Variable]] = None,
 ) -> Union[tf.Tensor, tf.Variable]:
-    tf.experimental.numpy.experimental_enable_numpy_behavior()
-    return tf.cast(tf.experimental.numpy.sinc(x), x.dtype)
+    x = ivy.pi * x
+    return tf.cast(tf.where(x == 0, 1, tf.math.sin(x) / x), x.dtype)
 
 
 @with_unsupported_dtypes({"2.9.1 and below": ("unsigned",)}, backend_version)
@@ -34,6 +32,10 @@ def lcm(
     return tf.math.abs(tf.experimental.numpy.lcm(x1, x2))
 
 
+@with_unsupported_dtypes(
+    {"2.9.1 and below": ("bfloat16", "uint8", "uint16", "uint32", "uint64")},
+    backend_version,
+)
 def fmod(
     x1: Union[tf.Tensor, tf.Variable],
     x2: Union[tf.Tensor, tf.Variable],
@@ -41,13 +43,8 @@ def fmod(
     *,
     out: Optional[Union[tf.Tensor, tf.Variable]] = None,
 ) -> Union[tf.Tensor, tf.Variable]:
-    result = tf.math.floormod(x1, x2, name=None)
-    temp = [result, x1]
-    return tf.map_fn(
-        lambda x: x[0] if (x[0] * x[1] >= 0) else (-1 * x[0]),
-        temp,
-        fn_output_signature=result.dtype,
-    )
+    res = tf.experimental.numpy.remainder(tf.math.abs(x1), tf.math.abs(x2))
+    return tf.where(x1 < 0, -res, res)
 
 
 def fmax(
@@ -62,8 +59,24 @@ def fmax(
     tf.dtypes.cast(x2, tf.float64)
     x1 = tf.where(tf.math.is_nan(x1, temp), x2, x1)
     x2 = tf.where(tf.math.is_nan(x2, temp), x1, x2)
-    tf.experimental.numpy.experimental_enable_numpy_behavior()
     ret = tf.experimental.numpy.maximum(x1, x2)
+    return ret
+
+
+def fmin(
+    x1: Union[tf.Tensor, tf.Variable],
+    x2: Union[tf.Tensor, tf.Variable],
+    /,
+    *,
+    out: Optional[Union[tf.Tensor, tf.Variable]] = None,
+) -> Union[tf.Tensor, tf.Variable]:
+    temp = tf.constant(float("nan"))
+    tf.dtypes.cast(x1, tf.float64)
+    tf.dtypes.cast(x2, tf.float64)
+    x1 = tf.where(tf.math.is_nan(x1, temp), x2, x1)
+    x2 = tf.where(tf.math.is_nan(x2, temp), x1, x2)
+    tf.experimental.numpy.experimental_enable_numpy_behavior()
+    ret = tf.experimental.numpy.minimum(x1, x2)
     return ret
 
 
@@ -96,6 +109,28 @@ def exp2(
     out: Optional[Union[tf.Tensor, tf.Variable]] = None,
 ) -> Union[tf.Tensor, tf.Variable]:
     return tf.math.pow(2, x, name=None)
+
+
+def copysign(
+    x1: Union[tf.Tensor, tf.Variable, Number],
+    x2: Union[tf.Tensor, tf.Variable, Number],
+    /,
+    *,
+    out: Optional[tf.Tensor] = None,
+) -> Union[tf.Tensor, tf.Variable]:
+    # Cast our inputs to float64 to match numpy behaviour
+    tensor_x2 = tf.convert_to_tensor(x2)
+    # Cast our inputs to float64 if needed to match numpy behaviour
+    if not tensor_x2.dtype.is_floating:
+        tensor_x2 = tf.cast(tensor_x2, tf.float64)
+    tensor_x1 = tf.convert_to_tensor(x1)
+    if not tensor_x1.dtype.is_floating:
+        tensor_x1 = tf.cast(tensor_x1, tf.float64)
+    # Replace any zero values with 1/the value, since tf.math.sign always
+    # returns 0 for positive or negative zero
+    signable_x2 = tf.where(tf.equal(tensor_x2, 0), tf.math.divide(1, x2), tensor_x2)
+    signs = tf.math.sign(signable_x2)
+    return tf.math.multiply(tf.math.abs(tensor_x1), signs)
 
 
 def count_nonzero(
@@ -152,24 +187,6 @@ def isclose(
     return tf.experimental.numpy.isclose(
         a, b, rtol=rtol, atol=atol, equal_nan=equal_nan
     )
-
-
-def isposinf(
-    x: Union[tf.Tensor, tf.Variable, float, list, tuple],
-    /,
-    *,
-    out: Optional[Union[tf.Tensor, tf.Variable]] = None,
-) -> Union[tf.Tensor, tf.Variable]:
-    return tf.experimental.numpy.isposinf(x)
-
-
-def isneginf(
-    x: Union[tf.Tensor, tf.Variable, float, list, tuple],
-    /,
-    *,
-    out: Optional[Union[tf.Tensor, tf.Variable]] = None,
-) -> Union[tf.Tensor, tf.Variable]:
-    return tf.experimental.numpy.isneginf(x)
 
 
 def nan_to_num(
@@ -247,17 +264,17 @@ def allclose(
     )
 
 
-@with_unsupported_dtypes({"2.9.1 and below": ("bfloat16,")}, backend_version)
+@with_unsupported_dtypes({"2.9.1 and below": ("bfloat16",)}, backend_version)
 def fix(
     x: Union[tf.Tensor, tf.Variable],
     /,
     *,
     out: Optional[Union[tf.Tensor, tf.Variable]] = None,
 ) -> Union[tf.Tensor, tf.Variable]:
-    return tf.experimental.numpy.fix(x)
+    return tf.cast(tf.where(x > 0, tf.math.floor(x), tf.math.ceil(x)), x.dtype)
 
 
-@with_unsupported_dtypes({"2.9.1 and below": ("float16,")}, backend_version)
+@with_unsupported_dtypes({"2.9.1 and below": ("float16",)}, backend_version)
 def nextafter(
     x1: Union[tf.Tensor, tf.Variable],
     x2: Union[tf.Tensor, tf.Variable],
@@ -275,12 +292,53 @@ def diff(
     x: Union[tf.Tensor, tf.Variable, int, float, list, tuple],
     /,
     *,
+    n: Optional[int] = 1,
+    axis: Optional[int] = -1,
+    prepend: Optional[Union[tf.Tensor, tf.Variable, int, float, list, tuple]] = None,
+    append: Optional[Union[tf.Tensor, tf.Variable, int, float, list, tuple]] = None,
+) -> Union[tf.Tensor, tf.Variable]:
+    if prepend is not None:
+        x = tf.experimental.numpy.append(prepend, x, axis=axis)
+    if append is not None:
+        x = tf.experimental.numpy.append(x, append, axis=axis)
+    return tf.experimental.numpy.diff(x, n=n, axis=axis)
+
+
+@with_unsupported_dtypes(
+    {
+        "2.9.1 and below": (
+            "uint8",
+            "uint16",
+            "uint32",
+            "uint64",
+            "bfloat16",
+            "int32",
+        )
+    },
+    backend_version,
+)
+def angle(
+    input: Union[tf.Tensor, tf.Variable],
+    /,
+    *,
+    deg: Optional[bool] = None,
     out: Optional[Union[tf.Tensor, tf.Variable]] = None,
 ) -> Union[tf.Tensor, tf.Variable]:
-    return tf.experimental.numpy.diff(x)
+    if deg:
+        return tf.math.angle(input, name=None) * (180 / tf.experimental.numpy.pi)
+    else:
+        return tf.math.angle(input, name=None)
 
 
-@with_unsupported_dtypes({"2.9.1 and below": ("bfloat16, float16,")}, backend_version)
+@with_supported_dtypes(
+    {
+        "2.11.0 and below": (
+            "float32",
+            "float64",
+        )
+    },
+    backend_version,
+)
 def zeta(
     x: Union[tf.Tensor, tf.Variable],
     q: Union[tf.Tensor, tf.Variable],
@@ -492,3 +550,14 @@ def gradient(
         return outvals[0]
     else:
         return outvals
+
+
+@with_unsupported_dtypes({"2.9.1 and below": ("bfloat16,")}, backend_version)
+def xlogy(
+    x: Union[tf.Tensor, tf.Variable],
+    y: Union[tf.Tensor, tf.Variable],
+    /,
+    *,
+    out: Optional[Union[tf.Tensor, tf.Variable]] = None,
+) -> Union[tf.Tensor, tf.Variable]:
+    return tf.math.xlogy(x, y)

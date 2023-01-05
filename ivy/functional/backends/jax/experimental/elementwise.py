@@ -1,7 +1,11 @@
 import operator
 from typing import Optional, Union, Tuple, List
+from numbers import Number
 from ivy.functional.backends.jax import JaxArray
 import jax.numpy as jnp
+import jax.scipy as js
+
+jax_ArrayLike = Union[JaxArray, Number]
 
 
 def lcm(x1: JaxArray, x2: JaxArray, /, *, out: Optional[JaxArray] = None) -> JaxArray:
@@ -32,6 +36,16 @@ def fmax(
     return jnp.fmax(x1, x2)
 
 
+def fmin(
+    x1: JaxArray,
+    x2: JaxArray,
+    /,
+    *,
+    out: Optional[JaxArray] = None,
+) -> JaxArray:
+    return jnp.fmin(x1, x2)
+
+
 def trapz(
     y: JaxArray,
     /,
@@ -60,7 +74,17 @@ def exp2(
     *,
     out: Optional[JaxArray] = None,
 ) -> JaxArray:
-    return jnp.exp2(x)
+    return jnp.power(2, x)
+
+
+def copysign(
+    x1: jax_ArrayLike,
+    x2: jax_ArrayLike,
+    /,
+    *,
+    out: Optional[JaxArray] = None,
+) -> JaxArray:
+    return jnp.copysign(x1, x2)
 
 
 def count_nonzero(
@@ -112,24 +136,6 @@ def isclose(
     return jnp.isclose(a, b, rtol=rtol, atol=atol, equal_nan=equal_nan)
 
 
-def isposinf(
-    x: Union[JaxArray, float, list, tuple],
-    /,
-    *,
-    out: Optional[JaxArray] = None,
-) -> JaxArray:
-    return jnp.isposinf(x, out=out)
-
-
-def isneginf(
-    x: Union[JaxArray, float, list, tuple],
-    /,
-    *,
-    out: Optional[JaxArray] = None,
-) -> JaxArray:
-    return jnp.isneginf(x, out=out)
-
-
 def nan_to_num(
     x: JaxArray,
     /,
@@ -176,9 +182,15 @@ def allclose(
 
 
 def diff(
-    x: Union[JaxArray, int, float, list, tuple], /, *, out: Optional[JaxArray] = None
+    x: Union[JaxArray, int, float, list, tuple],
+    /,
+    *,
+    n: Optional[int] = 1,
+    axis: Optional[int] = -1,
+    prepend: Optional[Union[JaxArray, int, float, list, tuple]] = None,
+    append: Optional[Union[JaxArray, int, float, list, tuple]] = None,
 ) -> JaxArray:
-    return jnp.diff(x, out=out)
+    return jnp.diff(x, n=n, axis=axis, prepend=prepend, append=append)
 
 
 def fix(
@@ -198,6 +210,16 @@ def nextafter(
     out: Optional[JaxArray] = None,
 ) -> JaxArray:
     return jnp.nextafter(x1, x2)
+
+
+def angle(
+    z: JaxArray,
+    /,
+    *,
+    deg: Optional[bool] = False,
+    out: Optional[JaxArray] = None,
+) -> JaxArray:
+    return jnp.angle(z, deg=deg)
 
 
 def zeta(
@@ -327,7 +349,6 @@ def gradient(
     otype = f.dtype
     if jnp.issubdtype(otype, jnp.integer):
         f = f.astype(jnp.float64)
-    otype = jnp.float64
 
     for axis, ax_dx in zip(axes, dx):
         if f.shape[axis] < edge_order + 1:
@@ -440,3 +461,7 @@ def gradient(
         return outvals[0]
     else:
         return outvals
+
+
+def xlogy(x: JaxArray, y: JaxArray, /, *, out: Optional[JaxArray] = None) -> JaxArray:
+    return js.special.xlogy(x, y)
